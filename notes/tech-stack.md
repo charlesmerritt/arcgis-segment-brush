@@ -42,8 +42,16 @@ from the user's brush stroke, and get contours back in milliseconds.
 - Python Toolboxes are pure Python — no C#, no ArcGIS Pro SDK, no Visual Studio
 - They show up natively in the Geoprocessing pane
 - They support `updateParameters` and `updateMessages` for dynamic UI
-- The interactive map component will use arcpy's tool infrastructure
 - Much lower maintenance burden than a compiled add-in
+
+**Update (M3):** The `.pyt` alone cannot provide interactivity. The ArcGIS Pro
+map canvas does not expose mouse events to Python Toolboxes. The interactive
+brush component (painting, cursor, scroll-wheel radius) **requires the ArcGIS
+Pro SDK for .NET** (`MapTool` subclass). The planned architecture is:
+- `.pyt` — GP parameter UI, license checking, batch segmentation, FC output
+- SDK Add-In — `MapTool` registers mouse events, manages stroke state, calls
+  `.pyt` execute or directly invokes `segment_brush` pipeline
+See `notes/interactivity.md` for the SDK tutorial reference.
 
 ### Raster Pipeline
 ```

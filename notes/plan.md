@@ -90,16 +90,18 @@ map space and pixel space. Still no ArcGIS UI, but all the logic is testable.
 **Goal:** The tool works end-to-end inside ArcGIS Pro. User can paint and
 get polygons.
 
-- [ ] `SegmentBrushTool.getParameterInfo` — define all GP parameters
-- [ ] `SegmentBrushTool.isLicensed` — check for extensions and scikit-image
-- [ ] `SegmentBrushTool.updateParameters` — dynamic parameter behavior
-- [ ] `SegmentBrushTool.updateMessages` — validation warnings
-- [ ] `SegmentBrushTool.execute` — orchestrate the full workflow
-- [ ] Interactive brush activation — research and implement the map tool
-      mechanism (CIM tool definition vs arcpy.mapping tool vs pythonaddins approach)
+- [x] `SegmentBrushTool.getParameterInfo` — all 5 parameters defined
+- [x] `SegmentBrushTool.isLicensed` — checks Spatial/Image Analyst + scikit-image
+- [x] `SegmentBrushTool.updateParameters` — auto-derives output FC path
+- [x] `SegmentBrushTool.updateMessages` — scikit-image error, extension warning
+- [x] `SegmentBrushTool.execute` — batch processor over `_active_session` strokes
+- [x] `SegmentBrushTool.postExecute` — adds output FC to active map TOC
+- [ ] **ArcGIS Pro SDK add-in** — companion `.NET` add-in that registers a
+      `MapTool` (mouse events) and populates `_active_session` in the .pyt;
+      see `notes/interactivity.md` for the SDK reference
 - [ ] Brush overlay rendering (circle cursor, stroke trails, closed loop display)
 - [ ] Scroll wheel → radius adjustment binding
-- [ ] "Process All" → batch segmentation → preview overlay
+- [ ] "Process All" → triggers `execute()` via the add-in button
 - [ ] Accept/reject per polygon in the tool pane
 - [ ] Output FC added to map TOC
 
@@ -138,10 +140,12 @@ get polygons.
 
 ## Open Questions
 
-- **Map tool mechanism:** How exactly does ArcGIS Pro allow a Python Toolbox
-  to capture mouse events on the map canvas? Options: CIM tool definition,
-  tool activation via arcpy, or a hybrid with a Python add-in for the
-  interactive component and a .pyt for the GP interface. Needs research in M3.
+- **Map tool mechanism:** ~~Needs research in M3.~~ **RESOLVED:** A pure Python
+  Toolbox (`.pyt`) cannot capture mouse events on the ArcGIS Pro map canvas.
+  The interactive brush requires the **ArcGIS Pro SDK for .NET** (`MapTool`
+  subclass). The `.pyt` handles GP parameters and batch processing; the SDK
+  add-in handles mouse events and populates `_active_session`. Reference:
+  https://developers.arcgis.com/documentation/arcgis-pro-sdk/tutorials/build-a-feature-construction-tool/
 - **Performance:** Will watershed on a 2048×2048 window be fast enough for
   interactive use? M1 benchmarking will answer this. If too slow, consider
   downsampling the raster window before segmentation.

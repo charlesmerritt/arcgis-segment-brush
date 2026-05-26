@@ -64,6 +64,37 @@ make typecheck  # Run type checker
 make all        # Run everything
 ```
 
+## Current Status
+
+### Python Toolbox (`.pyt`) — implemented
+
+| Method | Status |
+|--------|--------|
+| `getParameterInfo` | ✅ All 5 parameters defined |
+| `isLicensed` | ✅ Checks Spatial/Image Analyst + scikit-image |
+| `updateParameters` | ✅ Auto-derives output FC path from input raster |
+| `updateMessages` | ✅ Surfaces missing scikit-image error, extension warning |
+| `execute` | ✅ Batch processor — reads params, creates FC, runs pipeline per stroke, writes output |
+| `postExecute` | ✅ Adds output FC to active map TOC |
+
+### Core Pipeline (`src/segment_brush/`) — stubs only
+
+| Module | Status |
+|--------|--------|
+| `brush.py` | ✅ `BrushSession` and `BrushStroke` fully implemented |
+| `segmentation.py` | 🔲 All functions stubbed (`NotImplementedError`) — M1 work |
+| `raster_io.py` | 🔲 `extract_raster_window` stubbed — M2 work |
+| `feature_output.py` | 🔲 All functions stubbed — M2 work |
+
+### Interactive Brush — not yet started
+
+The interactive brush (painting on the map canvas, scroll-wheel radius,
+stroke preview) **requires the ArcGIS Pro SDK for .NET** — a pure Python
+toolbox cannot capture mouse events on the map canvas. This will be
+implemented as a companion `.NET` add-in that populates the shared
+`_active_session` in `SegmentBrush.pyt` before `execute()` is called.
+See `notes/interactivity.md` for the reference implementation.
+
 ## Architecture
 
 ```
@@ -82,6 +113,10 @@ Key design principle: **the segmentation pipeline has zero arcpy dependency**.
 It works entirely with numpy arrays and shapely geometries. The arcpy layer
 is isolated in `raster_io.py`, `feature_output.py`, and the `.pyt` toolbox.
 This allows testing the core algorithm without an ArcGIS Pro license.
+
+> **Interactivity note:** The `.pyt` handles GP parameters and batch processing.
+> The interactive brush tool (mouse events on the map canvas) requires a
+> companion ArcGIS Pro SDK add-in. See `notes/interactivity.md`.
 
 ## License
 
