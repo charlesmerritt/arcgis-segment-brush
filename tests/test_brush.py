@@ -6,7 +6,6 @@ These tests verify brush session logic — no arcpy dependency needed.
 from __future__ import annotations
 
 import numpy as np
-import pytest
 
 from segment_brush.brush import BrushSession, BrushStroke, StrokeState
 
@@ -105,7 +104,7 @@ class TestBrushSession:
         s1 = session.start_stroke(0.0, 0.0)
         s1.state = StrokeState.CLOSED  # force closed for test
 
-        s2 = session.start_stroke(10.0, 10.0)
+        session.start_stroke(10.0, 10.0)
         # s2 still PAINTING
 
         closed = session.get_closed_strokes()

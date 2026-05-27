@@ -6,8 +6,6 @@ for arcpy-dependent functions.
 
 from __future__ import annotations
 
-import re
-
 import pytest
 
 from segment_brush.feature_output import (

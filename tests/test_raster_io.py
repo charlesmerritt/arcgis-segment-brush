@@ -9,7 +9,6 @@ from __future__ import annotations
 import pytest
 
 from segment_brush.raster_io import (
-    RasterWindow,
     extract_raster_window,
     map_coords_to_pixel,
     pixel_to_map_coords,

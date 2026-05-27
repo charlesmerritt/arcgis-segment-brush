@@ -12,7 +12,6 @@ import pytest
 
 from segment_brush.segmentation import (
     SegmentationParams,
-    SegmentationResult,
     compute_edge_gradient,
     extract_boundary_polygon,
     run_watershed,

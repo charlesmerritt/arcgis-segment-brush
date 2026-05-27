@@ -17,6 +17,7 @@ classifiers = [
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
   "Topic :: Scientific/Engineering :: GIS",
 ]
 
@@ -24,7 +25,7 @@ dependencies = [
   "numpy>=1.24",
   "scikit-image>=0.21",
   "scipy>=1.11",
-  "shapely>=2.0",
+  "shapely>=2",
 ]
 urls.Changelog = "https://github.com/charlesmerritt/arcgis-segment-brush/blob/main/CHANGELOG.md"
 urls.Homepage = "https://github.com/charlesmerritt/arcgis-segment-brush"

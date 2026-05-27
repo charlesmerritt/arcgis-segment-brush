@@ -11,10 +11,10 @@ written directly to a geodatabase feature class.
 
 1. **Paint** — Activate the brush tool, paint closed loops along the approximate edges
    of objects (tree stands, fields, buildings, wetlands) in your imagery
-2. **Segment** — Hit "Process All" and the algorithm snaps your rough strokes onto the
+1. **Segment** — Hit "Process All" and the algorithm snaps your rough strokes onto the
    actual image edges using watershed segmentation
-3. **Review** — Accept, reject, or refine each candidate polygon individually
-4. **Output** — Accepted polygons are written to a feature class with metadata
+1. **Review** — Accept, reject, or refine each candidate polygon individually
+1. **Output** — Accepted polygons are written to a feature class with metadata
 
 ## Quick Start
 
@@ -41,17 +41,17 @@ uv sync --group dev --group test
 ### Add the Toolbox to ArcGIS Pro
 
 1. Open ArcGIS Pro
-2. In the **Geoprocessing** pane → click **Toolboxes** → **Add Toolbox**
-3. Navigate to `toolbox/SegmentBrush.pyt`
-4. The **Segment Brush** tool appears under the new toolbox
+1. In the **Geoprocessing** pane → click **Toolboxes** → **Add Toolbox**
+1. Navigate to `toolbox/SegmentBrush.pyt`
+1. The **Segment Brush** tool appears under the new toolbox
 
 ### Use
 
 1. Load a NAIP or other RGB raster into your map
-2. Open the **Segment Brush** tool from the Geoprocessing pane
-3. Select your raster layer and output feature class
-4. Click **Activate Brush** and start painting boundaries
-5. Click **Process All** when ready
+1. Open the **Segment Brush** tool from the Geoprocessing pane
+1. Select your raster layer and output feature class
+1. Click **Activate Brush** and start painting boundaries
+1. Click **Process All** when ready
 
 ## Development
 
@@ -68,23 +68,23 @@ make all        # Run everything
 
 ### Python Toolbox (`.pyt`) — implemented
 
-| Method | Status |
-|--------|--------|
-| `getParameterInfo` | ✅ All 5 parameters defined |
-| `isLicensed` | ✅ Checks Spatial/Image Analyst + scikit-image |
-| `updateParameters` | ✅ Auto-derives output FC path from input raster |
-| `updateMessages` | ✅ Surfaces missing scikit-image error, extension warning |
-| `execute` | ✅ Batch processor — reads params, creates FC, runs pipeline per stroke, writes output |
-| `postExecute` | ✅ Adds output FC to active map TOC |
+| Method             | Status                                                                                 |
+| ------------------ | -------------------------------------------------------------------------------------- |
+| `getParameterInfo` | ✅ All 5 parameters defined                                                            |
+| `isLicensed`       | ✅ Checks Spatial/Image Analyst + scikit-image                                         |
+| `updateParameters` | ✅ Auto-derives output FC path from input raster                                       |
+| `updateMessages`   | ✅ Surfaces missing scikit-image error, extension warning                              |
+| `execute`          | ✅ Batch processor — reads params, creates FC, runs pipeline per stroke, writes output |
+| `postExecute`      | ✅ Adds output FC to active map TOC                                                    |
 
 ### Core Pipeline (`src/segment_brush/`) — stubs only
 
-| Module | Status |
-|--------|--------|
-| `brush.py` | ✅ `BrushSession` and `BrushStroke` fully implemented |
-| `segmentation.py` | 🔲 All functions stubbed (`NotImplementedError`) — M1 work |
-| `raster_io.py` | 🔲 `extract_raster_window` stubbed — M2 work |
-| `feature_output.py` | 🔲 All functions stubbed — M2 work |
+| Module              | Status                                                     |
+| ------------------- | ---------------------------------------------------------- |
+| `brush.py`          | ✅ `BrushSession` and `BrushStroke` fully implemented      |
+| `segmentation.py`   | 🔲 All functions stubbed (`NotImplementedError`) — M1 work |
+| `raster_io.py`      | 🔲 `extract_raster_window` stubbed — M2 work               |
+| `feature_output.py` | 🔲 All functions stubbed — M2 work                         |
 
 ### Interactive Brush — not yet started
 
