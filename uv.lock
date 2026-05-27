@@ -12,6 +12,7 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "numpy" },
+    { name = "pytest" },
     { name = "scikit-image" },
     { name = "scipy" },
     { name = "shapely" },
@@ -39,9 +40,10 @@ test = [
 [package.metadata]
 requires-dist = [
     { name = "numpy", specifier = ">=1.24" },
+    { name = "pytest", specifier = ">=9.0.2" },
     { name = "scikit-image", specifier = ">=0.21" },
     { name = "scipy", specifier = ">=1.11" },
-    { name = "shapely", specifier = ">=2.0" },
+    { name = "shapely", specifier = ">=2" },
 ]
 
 [package.metadata.requires-dev]
