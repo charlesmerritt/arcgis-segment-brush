@@ -70,30 +70,57 @@ make all        # Run everything
 
 | Method             | Status                                                                                 |
 | ------------------ | -------------------------------------------------------------------------------------- |
-| `getParameterInfo` | ✅ All 5 parameters defined                                                            |
+| `getParameterInfo` | ✅ 7 parameters (incl. Seed Points + Fuzziness for magic-wand mode)                    |
 | `isLicensed`       | ✅ Checks Spatial/Image Analyst + scikit-image                                         |
 | `updateParameters` | ✅ Auto-derives output FC path from input raster                                       |
 | `updateMessages`   | ✅ Surfaces missing scikit-image error, extension warning                              |
 | `execute`          | ✅ Batch processor — reads params, creates FC, runs pipeline per stroke, writes output |
 | `postExecute`      | ✅ Adds output FC to active map TOC                                                    |
 
-### Core Pipeline (`src/segment_brush/`) — stubs only
+### Core Pipeline (`src/segment_brush/`)
 
-| Module              | Status                                                     |
-| ------------------- | ---------------------------------------------------------- |
-| `brush.py`          | ✅ `BrushSession` and `BrushStroke` fully implemented      |
-| `segmentation.py`   | 🔲 All functions stubbed (`NotImplementedError`) — M1 work |
-| `raster_io.py`      | 🔲 `extract_raster_window` stubbed — M2 work               |
-| `feature_output.py` | 🔲 All functions stubbed — M2 work                         |
+| Module              | Status                                                                    |
+| ------------------- | ------------------------------------------------------------------------- |
+| `brush.py`          | ✅ `BrushSession` and `BrushStroke` fully implemented                     |
+| `segmentation.py`   | 🟡 Fuzzy-select (magic wand) path implemented + tested; watershed path M1 |
+| `raster_io.py`      | 🔲 `extract_raster_window` stubbed — M2 work                              |
+| `feature_output.py` | 🔲 All functions stubbed — M2 work                                        |
 
-### Interactive Brush — not yet started
+### Fuzzy Select / Magic Wand — available now (no .NET required)
 
-The interactive brush (painting on the map canvas, scroll-wheel radius,
-stroke preview) **requires the ArcGIS Pro SDK for .NET** — a pure Python
-toolbox cannot capture mouse events on the map canvas. This will be
-implemented as a companion `.NET` add-in that populates the shared
-`_active_session` in `SegmentBrush.pyt` before `execute()` is called.
-See `notes/interactivity.md` for the reference implementation.
+The **magic-wand path is implemented and tested**. Instead of painting a loop,
+the user drops one or more **Seed Points** on the map using ArcGIS Pro's native
+sketch tool (a `GPFeatureRecordSetLayer` parameter — pure Python, no add-in),
+sets a **Fuzziness / Tolerance** value, and the tool grows a region from each
+seed by color similarity and writes it out as a clean polygon.
+
+- `segmentation.flood_fill_from_seed` — region growing by color distance
+- `segmentation.mask_to_polygon` — boundary tracing → shapely Polygon
+- `segmentation.segment_from_seed` — full seed → polygon pipeline
+- `segmentation.segment_from_seed_adaptive` — grows the read window until the
+  region is fully contained, so large objects aren't clipped
+- `segmentation.smooth_polygon` — Douglas-Peucker + buffer smoothing
+
+The read window around each seed **grows adaptively**: it starts small and
+doubles whenever the filled region still touches the window edge, until the
+object is fully contained or a cap is reached. Small objects stay cheap; large
+ones aren't cut off. If the cap is hit, the result is flagged `clipped` and the
+tool warns.
+
+This path has **zero arcpy dependency** in its core, so it is fully unit-tested
+without an ArcGIS Pro license (see `tests/test_segmentation.py`). Only the
+raster read (`raster_io`) and feature write (`feature_output`) glue remain
+stubbed for the ArcGIS integration (M2).
+
+### Interactive Brush (watershed path) — not yet started
+
+The interactive *brush* (painting closed loops on the map canvas, scroll-wheel
+radius, stroke preview) **requires the ArcGIS Pro SDK for .NET** — a pure Python
+toolbox cannot capture mouse events on the map canvas. This will be implemented
+as a companion `.NET` add-in that populates the shared `_active_session` in
+`SegmentBrush.pyt` before `execute()` is called. See `notes/interactivity.md`.
+The seed-based fuzzy-select path above is the low-friction alternative that
+delivers magic-wand behavior today without it.
 
 ## Architecture
 

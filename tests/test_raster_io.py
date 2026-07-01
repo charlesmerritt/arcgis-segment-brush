@@ -7,11 +7,13 @@ for arcpy-dependent functions.
 from __future__ import annotations
 
 import pytest
+from shapely.geometry import Polygon
 
 from segment_brush.raster_io import (
     extract_raster_window,
     map_coords_to_pixel,
     pixel_to_map_coords,
+    polygon_pixels_to_map,
 )
 
 
@@ -54,6 +56,50 @@ class TestCoordinateConversion:
         # Should be within one cell_size of original (pixel center snapping)
         assert abs(recovered_x - original_x) < cell_size[0]
         assert abs(recovered_y - original_y) < cell_size[1]
+
+
+class TestPolygonPixelsToMap:
+    """Test pixel-space → map polygon conversion — pure math, no arcpy."""
+
+    def test_vertices_match_pixel_to_map_coords(self) -> None:
+        origin = (100.0, 200.0)
+        cell_size = (2.0, 2.0)
+        # Pixel-space polygon uses x=col, y=row.
+        poly = Polygon([(0, 0), (10, 0), (10, 5), (0, 5)])
+
+        mapped = polygon_pixels_to_map(poly, origin, cell_size)
+
+        # Each mapped vertex must equal pixel_to_map_coords(row=y, col=x).
+        for (px_x, px_y), (map_x, map_y) in zip(
+            poly.exterior.coords, mapped.exterior.coords
+        ):
+            exp_x, exp_y = pixel_to_map_coords(px_y, px_x, origin, cell_size)
+            assert map_x == pytest.approx(exp_x)
+            assert map_y == pytest.approx(exp_y)
+
+    def test_y_axis_is_flipped(self) -> None:
+        # A pixel row increasing downward must map to decreasing map-y.
+        origin = (0.0, 1000.0)
+        cell_size = (1.0, 1.0)
+        poly = Polygon([(0, 0), (4, 0), (4, 10), (0, 10)])
+
+        mapped = polygon_pixels_to_map(poly, origin, cell_size)
+
+        _, ymin, _, ymax = mapped.bounds
+        # Row 0 (top) → higher map-y than row 10 (bottom).
+        top_y = pixel_to_map_coords(0, 0, origin, cell_size)[1]
+        assert top_y == pytest.approx(ymax)
+        assert ymax > ymin
+
+    def test_preserves_area_scaled_by_cell_size(self) -> None:
+        origin = (50.0, 50.0)
+        cell_size = (0.5, 0.5)
+        poly = Polygon([(0, 0), (20, 0), (20, 20), (0, 20)])  # 400 px²
+
+        mapped = polygon_pixels_to_map(poly, origin, cell_size)
+
+        # Area scales by cell_w * cell_h = 0.25 → 100 map units².
+        assert mapped.area == pytest.approx(400 * 0.5 * 0.5)
 
 
 class TestExtractRasterWindow:
