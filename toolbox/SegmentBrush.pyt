@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import os
 import sys
+
 import arcpy
 
 # Add the project's src/ directory to the Python path so we can import
@@ -25,6 +26,11 @@ if _src_dir not in sys.path:
 # (to be implemented in M3). execute() processes whatever closed strokes
 # are present here. Reset between tool runs via postExecute.
 _active_session = None  # BrushSession | None
+
+# Side length (in pixels) of the raster window read around each fuzzy-select
+# seed. A magic-wand fill has no predetermined size, so we give it a generous
+# fixed window and let extract_raster_window cap the extent for large rasters.
+_SEED_WINDOW_PX = 1024
 
 
 class Toolbox:
@@ -115,7 +121,43 @@ class SegmentBrushTool:
         )
         brush_radius.value = 10.0
 
-        return [input_raster, output_fc, seg_method, smooth_level, brush_radius]
+        # 5: seed_points (GPFeatureRecordSetLayer) — interactive "magic wand"
+        # seeds. A Feature Set gives us ArcGIS Pro's *native* sketch tool on the
+        # map canvas from pure Python — no .NET SDK add-in required. Each point
+        # the user drops is a seed for fuzzy-select region growing. This is the
+        # low-friction path to Photoshop magic-wand behavior inside a .pyt.
+        seed_points = arcpy.Parameter(
+            displayName="Seed Points (Magic Wand)",
+            name="seed_points",
+            datatype="GPFeatureRecordSetLayer",
+            parameterType="Optional",
+            direction="Input",
+        )
+        seed_points.filter.list = ["Point"]
+
+        # 6: tolerance (GPLong) — fuzziness slider 0–100 (the magic-wand knob).
+        # Distinct from smooth_level: tolerance controls how far the region
+        # grows by color similarity; smooth_level controls boundary smoothing.
+        tolerance = arcpy.Parameter(
+            displayName="Fuzziness / Tolerance",
+            name="tolerance",
+            datatype="GPLong",
+            parameterType="Optional",
+            direction="Input",
+        )
+        tolerance.filter.type = "Range"
+        tolerance.filter.list = [0, 100]
+        tolerance.value = 30
+
+        return [
+            input_raster,
+            output_fc,
+            seg_method,
+            smooth_level,
+            brush_radius,
+            seed_points,
+            tolerance,
+        ]
 
     def isLicensed(self) -> bool:
         """Check whether the tool is licensed to execute.
@@ -206,11 +248,15 @@ class SegmentBrushTool:
         determined during M1 implementation.
         """
         from segment_brush.brush import BrushSession, StrokeState
-        from segment_brush.segmentation import SegmentationParams, segment_stroke
-        from segment_brush.raster_io import extract_raster_window
         from segment_brush.feature_output import (
             create_output_feature_class,
             write_polygon,
+        )
+        from segment_brush.raster_io import extract_raster_window, map_coords_to_pixel
+        from segment_brush.segmentation import (
+            SegmentationParams,
+            segment_from_seed,
+            segment_stroke,
         )
 
         # 1. Read parameters
@@ -219,24 +265,30 @@ class SegmentBrushTool:
         seg_method = parameters[2].valueAsText or "Watershed"
         smooth_level = int(parameters[3].value) if parameters[3].value is not None else 50
         brush_radius = float(parameters[4].value) if parameters[4].value is not None else 10.0
+        seed_points = parameters[5].value
+        tolerance = int(parameters[6].value) if parameters[6].value is not None else 30
 
-        # 2. Build segmentation params
+        # 2. Build segmentation params (shared by both input modes)
         seg_params = SegmentationParams(
             method=seg_method.lower(),
             smooth_level=smooth_level,
+            tolerance=tolerance,
         )
 
-        # 3. Get closed strokes from the active session (lazy-init if not yet set)
+        # 3. Gather inputs. Two modes are supported:
+        #    - Painted strokes (watershed) from the interactive brush add-in.
+        #    - Seed points (fuzzy select / magic wand) from the native sketch.
         global _active_session
         if _active_session is None:
             _active_session = BrushSession()
         session = _active_session
-
         closed_strokes = session.get_processable_strokes()
-        if not closed_strokes:
+        seed_coords = self._read_seed_points(seed_points)
+
+        if not closed_strokes and not seed_coords:
             messages.addWarningMessage(
-                "No closed brush strokes found. "
-                "Paint at least one closed boundary before running the tool."
+                "No inputs found. Either paint a closed boundary with the brush "
+                "or drop one or more Seed Points before running the tool."
             )
             return
 
@@ -248,10 +300,10 @@ class SegmentBrushTool:
             messages.addMessage(f"Creating output feature class: {output_fc_path}")
             create_output_feature_class(output_fc_path, spatial_ref)
 
-        # 5. Process each closed stroke through the segmentation pipeline
         source_raster_name = os.path.basename(input_raster_path)
         polygon_count = 0
 
+        # 5a. Process each closed stroke through the watershed pipeline
         for i, stroke in enumerate(closed_strokes, start=1):
             messages.addMessage(f"Processing stroke {i} of {len(closed_strokes)}...")
 
@@ -291,9 +343,71 @@ class SegmentBrushTool:
                 f"(confidence: {result.confidence:.2f})"
             )
 
+        # 5b. Process each seed point through the fuzzy-select pipeline. A fixed
+        # window is read around the seed (magic-wand fills grow to unknown size,
+        # so we give them room and let extract_raster_window cap the extent).
+        for i, (seed_x, seed_y) in enumerate(seed_coords, start=1):
+            messages.addMessage(
+                f"Processing seed {i} of {len(seed_coords)} "
+                f"(tolerance={tolerance})..."
+            )
+
+            half_w = (_SEED_WINDOW_PX / 2) * raster_obj.meanCellWidth
+            half_h = (_SEED_WINDOW_PX / 2) * raster_obj.meanCellHeight
+            extent = (
+                seed_x - half_w,
+                seed_y - half_h,
+                seed_x + half_w,
+                seed_y + half_h,
+            )
+
+            raster_window = extract_raster_window(raster_obj, extent)
+            seed_px = map_coords_to_pixel(
+                seed_x, seed_y, raster_window.origin, raster_window.cell_size
+            )
+
+            try:
+                result = segment_from_seed(
+                    raster_window.pixels, seed_px, tolerance, seg_params
+                )
+            except ValueError as exc:
+                messages.addWarningMessage(f"  Seed {i} produced no region: {exc}")
+                continue
+
+            write_polygon(
+                output_fc_path,
+                result.polygon,
+                raster_window.spatial_reference,
+                source_raster=source_raster_name,
+                seg_method="fuzzy_select",
+                smooth_level=smooth_level,
+            )
+
+            polygon_count += 1
+            messages.addMessage(
+                f"  \u2192 Polygon {polygon_count} written "
+                f"(confidence: {result.confidence:.2f})"
+            )
+
         messages.addMessage(
             f"Complete. {polygon_count} polygon(s) written to {output_fc_path}."
         )
+
+    @staticmethod
+    def _read_seed_points(seed_points: object) -> list:
+        """Extract (x, y) map coordinates from the seed-point Feature Set.
+
+        Returns an empty list when no seeds were sketched. Kept separate from
+        execute() so the arcpy cursor access is isolated and easy to follow.
+        """
+        if not seed_points:
+            return []
+        coords = []
+        with arcpy.da.SearchCursor(seed_points, ["SHAPE@XY"]) as cursor:
+            for (xy,) in cursor:
+                if xy is not None:
+                    coords.append((float(xy[0]), float(xy[1])))
+        return coords
 
     def postExecute(self, parameters: list) -> None:
         """Post-execution cleanup.
