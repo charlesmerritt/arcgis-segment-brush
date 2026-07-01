@@ -19,6 +19,7 @@ from segment_brush.segmentation import (
     mask_to_polygon,
     run_watershed,
     segment_from_seed,
+    segment_from_seed_adaptive,
     segment_stroke,
     smooth_polygon,
     stroke_to_markers,
@@ -229,3 +230,105 @@ class TestSegmentFromSeed:
             sample_rgb_image, _SEED, params=SegmentationParams(smooth_level=100)
         )
         assert len(smoothed.polygon.exterior.coords) <= len(raw.polygon.exterior.coords)
+
+
+def _centered_window_provider(master: np.ndarray, center: tuple[int, int]):
+    """A test window_provider that crops a centered window from a master image.
+
+    Emulates the toolbox's arcpy reader: given a window size in pixels, it
+    returns a window object (exposing ``.pixels``) cropped from ``master`` and
+    the seed's (row, col) within that crop. Records the sizes it was asked for
+    so tests can assert the driver actually grew the window.
+    """
+    from types import SimpleNamespace
+
+    requested: list[int] = []
+
+    def provider(window_px: int) -> tuple:
+        requested.append(window_px)
+        half = window_px // 2
+        r0 = max(0, center[0] - half)
+        r1 = min(master.shape[0], center[0] + half)
+        c0 = max(0, center[1] - half)
+        c1 = min(master.shape[1], center[1] + half)
+        crop = master[r0:r1, c0:c1]
+        window = SimpleNamespace(pixels=crop)
+        return window, (center[0] - r0, center[1] - c0)
+
+    provider.requested = requested  # type: ignore[attr-defined]
+    return provider
+
+
+class TestSegmentFromSeedAdaptive:
+    """Test the adaptive (growing-window) fuzzy-select driver."""
+
+    @staticmethod
+    def _master_with_square(size: int, lo: int, hi: int) -> np.ndarray:
+        img = np.full((size, size, 3), 50, dtype=np.uint8)
+        img[lo:hi, lo:hi, :] = 200
+        return img
+
+    def test_grows_window_until_object_is_contained(self) -> None:
+        # A 200x200 bright square centered in a 400x400 image.
+        master = self._master_with_square(400, 100, 300)
+        provider = _centered_window_provider(master, (200, 200))
+
+        result, window = segment_from_seed_adaptive(
+            provider,
+            tolerance=30,
+            initial_window_px=64,  # starts fully inside the object
+            max_window_px=1024,
+        )
+
+        # It must have grown past the initial size to escape the object.
+        assert provider.requested[0] == 64
+        assert len(provider.requested) > 1
+        assert not result.clipped
+        assert result.polygon.area == pytest.approx(200 * 200, rel=0.2)
+
+    def test_stops_at_max_and_flags_clipped(self) -> None:
+        # A 360x360 square that never fits inside the capped window.
+        master = self._master_with_square(400, 20, 380)
+        provider = _centered_window_provider(master, (200, 200))
+
+        result, _ = segment_from_seed_adaptive(
+            provider,
+            tolerance=30,
+            initial_window_px=64,
+            max_window_px=128,  # smaller than the object
+        )
+
+        assert result.clipped
+        assert max(provider.requested) <= 128
+
+    def test_no_growth_when_object_already_fits(self) -> None:
+        # Small 40x40 object; the initial window already contains it.
+        master = self._master_with_square(400, 180, 220)
+        provider = _centered_window_provider(master, (200, 200))
+
+        result, _ = segment_from_seed_adaptive(
+            provider,
+            tolerance=30,
+            initial_window_px=256,
+            max_window_px=1024,
+        )
+
+        assert provider.requested == [256]  # one read, no growth
+        assert not result.clipped
+        assert result.polygon.area == pytest.approx(40 * 40, rel=0.25)
+
+    def test_degenerate_growth_still_terminates(self) -> None:
+        # growth == 1.0 would stall; the driver must force progress to the cap.
+        master = self._master_with_square(400, 20, 380)
+        provider = _centered_window_provider(master, (200, 200))
+
+        result, _ = segment_from_seed_adaptive(
+            provider,
+            tolerance=30,
+            initial_window_px=64,
+            max_window_px=128,
+            growth=1.0,
+        )
+
+        assert result.clipped
+        assert provider.requested[-1] == 128

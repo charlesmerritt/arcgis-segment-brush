@@ -11,11 +11,13 @@ toolbox/. This separation allows testing without an ArcGIS Pro license.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from numpy.typing import NDArray
     from shapely.geometry import Polygon
 
@@ -44,6 +46,8 @@ class SegmentationResult:
     polygon: Polygon  # refined boundary in pixel coordinates
     confidence: float  # 0.0–1.0, how well the stroke matched an edge
     method: str  # which algorithm produced this
+    # True if the region reached the read-window edge (polygon may be cut off).
+    clipped: bool = False
 
 
 def compute_edge_gradient(
@@ -417,3 +421,104 @@ def segment_from_seed(
         confidence=confidence,
         method="fuzzy_select",
     )
+
+
+# Default read-window sizes (in pixels) for adaptive fuzzy select. The window
+# starts small and doubles until the filled region no longer touches its edge
+# (i.e. the whole object is contained) or the cap is reached.
+_SEED_INITIAL_WINDOW_PX = 512
+_SEED_MAX_WINDOW_PX = 8192
+_SEED_WINDOW_GROWTH = 2.0
+
+
+def _mask_touches_border(mask: NDArray[np.bool_]) -> bool:
+    """True if any selected pixel lies on the outermost ring of the window.
+
+    A region touching the window edge means the read window was too small to
+    contain the whole object, so the fill was cut off by the window rather than
+    by a real image edge.
+    """
+    return bool(
+        mask[0, :].any() or mask[-1, :].any() or mask[:, 0].any() or mask[:, -1].any()
+    )
+
+
+def segment_from_seed_adaptive(
+    window_provider: Callable[[int], tuple[Any, tuple[int, int]]],
+    tolerance: int | None = None,
+    params: SegmentationParams | None = None,
+    initial_window_px: int = _SEED_INITIAL_WINDOW_PX,
+    max_window_px: int = _SEED_MAX_WINDOW_PX,
+    growth: float = _SEED_WINDOW_GROWTH,
+) -> tuple[SegmentationResult, Any]:
+    """Fuzzy-select from a seed, growing the read window until the object fits.
+
+    A magic-wand fill has no predetermined size, so a fixed window can cut a
+    large object off at its edge. This driver reads a small window first and
+    re-reads a larger one whenever the filled region still touches the window
+    border, until it is fully contained or ``max_window_px`` is reached.
+
+    The raster read is abstracted behind ``window_provider`` so this function
+    stays free of any arcpy dependency and is unit-testable. The provider is
+    called with a window size in pixels and returns ``(window, seed_px)``, where
+    ``window`` is any object exposing a ``.pixels`` ndarray (and, for callers,
+    whatever georeferencing metadata they need) and ``seed_px`` is the seed's
+    ``(row, col)`` within that window.
+
+    Parameters
+    ----------
+    window_provider : callable
+        ``window_provider(window_px) -> (window, seed_px)``. Reads a window of
+        roughly ``window_px`` on a side centered on the seed.
+    tolerance : int, optional
+        Fuzziness 0–100. Falls back to ``params.tolerance`` if not given.
+    params : SegmentationParams, optional
+        Algorithm parameters. Uses defaults if not provided.
+    initial_window_px, max_window_px : int
+        Starting and maximum window side length in pixels.
+    growth : float
+        Multiplier applied to the window size on each retry (> 1).
+
+    Returns
+    -------
+    tuple of (SegmentationResult, window)
+        The result (``clipped`` is True if the region still reached the edge at
+        ``max_window_px``) and the final window the provider returned, so the
+        caller can pull georeferencing from the same window the polygon is in.
+
+    Raises
+    ------
+    ValueError
+        Propagated from :func:`flood_fill_from_seed` if the seed is out of
+        bounds, or from :func:`mask_to_polygon` on an untraceable region.
+    """
+    if params is None:
+        params = SegmentationParams(method="fuzzy_select")
+    if tolerance is None:
+        tolerance = params.tolerance
+
+    window_px = int(initial_window_px)
+    max_window_px = int(max_window_px)
+
+    while True:
+        window, seed_px = window_provider(window_px)
+        mask = flood_fill_from_seed(window.pixels, seed_px, tolerance)
+        touching = _mask_touches_border(mask)
+        if not touching or window_px >= max_window_px:
+            break
+        # Grow for the next attempt, guaranteeing forward progress even if
+        # ``growth`` is degenerate, and never overshooting the cap.
+        next_px = min(int(window_px * growth), max_window_px)
+        window_px = next_px if next_px > window_px else max_window_px
+
+    polygon = mask_to_polygon(mask)
+    polygon = smooth_polygon(polygon, params.smooth_level)
+    confidence = _boundary_confidence(window.pixels, mask)
+
+    result = SegmentationResult(
+        polygon=polygon,
+        confidence=confidence,
+        method="fuzzy_select",
+        clipped=touching,
+    )
+    return result, window

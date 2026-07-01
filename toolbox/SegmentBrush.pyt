@@ -27,10 +27,13 @@ if _src_dir not in sys.path:
 # are present here. Reset between tool runs via postExecute.
 _active_session = None  # BrushSession | None
 
-# Side length (in pixels) of the raster window read around each fuzzy-select
-# seed. A magic-wand fill has no predetermined size, so we give it a generous
-# fixed window and let extract_raster_window cap the extent for large rasters.
-_SEED_WINDOW_PX = 1024
+# Read-window sizing (in pixels) for the adaptive fuzzy-select seed fill. The
+# window starts at the initial size and doubles until the filled region no
+# longer touches the window edge (the whole object is contained) or the max is
+# reached. A magic-wand fill has no predetermined size, so this avoids both
+# reading huge windows for small objects and clipping large ones.
+_SEED_INITIAL_WINDOW_PX = 512
+_SEED_MAX_WINDOW_PX = 8192
 
 
 class Toolbox:
@@ -255,7 +258,7 @@ class SegmentBrushTool:
         from segment_brush.raster_io import extract_raster_window, map_coords_to_pixel
         from segment_brush.segmentation import (
             SegmentationParams,
-            segment_from_seed,
+            segment_from_seed_adaptive,
             segment_stroke,
         )
 
@@ -343,41 +346,47 @@ class SegmentBrushTool:
                 f"(confidence: {result.confidence:.2f})"
             )
 
-        # 5b. Process each seed point through the fuzzy-select pipeline. A fixed
-        # window is read around the seed (magic-wand fills grow to unknown size,
-        # so we give them room and let extract_raster_window cap the extent).
+        # 5b. Process each seed point through the adaptive fuzzy-select pipeline.
+        # The read window grows around the seed until the filled region is fully
+        # contained (or the max window is hit), so large objects aren't clipped
+        # and small ones don't pay for an oversized read.
         for i, (seed_x, seed_y) in enumerate(seed_coords, start=1):
             messages.addMessage(
                 f"Processing seed {i} of {len(seed_coords)} "
                 f"(tolerance={tolerance})..."
             )
 
-            half_w = (_SEED_WINDOW_PX / 2) * raster_obj.meanCellWidth
-            half_h = (_SEED_WINDOW_PX / 2) * raster_obj.meanCellHeight
-            extent = (
-                seed_x - half_w,
-                seed_y - half_h,
-                seed_x + half_w,
-                seed_y + half_h,
-            )
-
-            raster_window = extract_raster_window(raster_obj, extent)
-            seed_px = map_coords_to_pixel(
-                seed_x, seed_y, raster_window.origin, raster_window.cell_size
+            provider = self._make_seed_window_provider(
+                raster_obj,
+                seed_x,
+                seed_y,
+                extract_raster_window,
+                map_coords_to_pixel,
             )
 
             try:
-                result = segment_from_seed(
-                    raster_window.pixels, seed_px, tolerance, seg_params
+                result, window = segment_from_seed_adaptive(
+                    provider,
+                    tolerance,
+                    seg_params,
+                    initial_window_px=_SEED_INITIAL_WINDOW_PX,
+                    max_window_px=_SEED_MAX_WINDOW_PX,
                 )
             except ValueError as exc:
                 messages.addWarningMessage(f"  Seed {i} produced no region: {exc}")
                 continue
 
+            if result.clipped:
+                messages.addWarningMessage(
+                    f"  Seed {i}: region still reached the "
+                    f"{_SEED_MAX_WINDOW_PX}px window edge \u2014 the polygon may be "
+                    "clipped. Try a lower tolerance or a more central seed."
+                )
+
             write_polygon(
                 output_fc_path,
                 result.polygon,
-                raster_window.spatial_reference,
+                window.spatial_reference,
                 source_raster=source_raster_name,
                 seg_method="fuzzy_select",
                 smooth_level=smooth_level,
@@ -408,6 +417,41 @@ class SegmentBrushTool:
                 if xy is not None:
                     coords.append((float(xy[0]), float(xy[1])))
         return coords
+
+    @staticmethod
+    def _make_seed_window_provider(
+        raster_obj: object,
+        seed_x: float,
+        seed_y: float,
+        extract_raster_window: object,
+        map_coords_to_pixel: object,
+    ) -> object:
+        """Build the window provider the adaptive fuzzy-select driver calls.
+
+        Returns a callable ``provider(window_px) -> (window, seed_px)`` that
+        reads a ``window_px``-sided raster window centered on the seed and maps
+        the seed's map coordinates to a pixel within it. This is where the arcpy
+        raster read lives; the driver in ``segmentation`` stays arcpy-free.
+        """
+        cell_w = raster_obj.meanCellWidth
+        cell_h = raster_obj.meanCellHeight
+
+        def provider(window_px: int) -> tuple:
+            half_w = (window_px / 2) * cell_w
+            half_h = (window_px / 2) * cell_h
+            extent = (
+                seed_x - half_w,
+                seed_y - half_h,
+                seed_x + half_w,
+                seed_y + half_h,
+            )
+            window = extract_raster_window(raster_obj, extent, max_size=window_px)
+            seed_px = map_coords_to_pixel(
+                seed_x, seed_y, window.origin, window.cell_size
+            )
+            return window, seed_px
+
+        return provider
 
     def postExecute(self, parameters: list) -> None:
         """Post-execution cleanup.

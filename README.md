@@ -97,7 +97,15 @@ seed by color similarity and writes it out as a clean polygon.
 - `segmentation.flood_fill_from_seed` — region growing by color distance
 - `segmentation.mask_to_polygon` — boundary tracing → shapely Polygon
 - `segmentation.segment_from_seed` — full seed → polygon pipeline
+- `segmentation.segment_from_seed_adaptive` — grows the read window until the
+  region is fully contained, so large objects aren't clipped
 - `segmentation.smooth_polygon` — Douglas-Peucker + buffer smoothing
+
+The read window around each seed **grows adaptively**: it starts small and
+doubles whenever the filled region still touches the window edge, until the
+object is fully contained or a cap is reached. Small objects stay cheap; large
+ones aren't cut off. If the cap is hit, the result is flagged `clipped` and the
+tool warns.
 
 This path has **zero arcpy dependency** in its core, so it is fully unit-tested
 without an ArcGIS Pro license (see `tests/test_segmentation.py`). Only the
