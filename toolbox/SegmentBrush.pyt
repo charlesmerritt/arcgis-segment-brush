@@ -255,7 +255,11 @@ class SegmentBrushTool:
             create_output_feature_class,
             write_polygon,
         )
-        from segment_brush.raster_io import extract_raster_window, map_coords_to_pixel
+        from segment_brush.raster_io import (
+            extract_raster_window,
+            map_coords_to_pixel,
+            polygon_pixels_to_map,
+        )
         from segment_brush.segmentation import (
             SegmentationParams,
             segment_from_seed_adaptive,
@@ -329,10 +333,13 @@ class SegmentBrushTool:
                 raster_window.pixels, stroke_pixels, brush_radius_px, seg_params
             )
 
-            # Write the refined polygon to the output feature class
+            # Georeference the pixel-space polygon before writing it out.
+            map_polygon = polygon_pixels_to_map(
+                result.polygon, raster_window.origin, raster_window.cell_size
+            )
             write_polygon(
                 output_fc_path,
-                result.polygon,
+                map_polygon,
                 raster_window.spatial_reference,
                 source_raster=source_raster_name,
                 seg_method=seg_method,
@@ -383,9 +390,14 @@ class SegmentBrushTool:
                     "clipped. Try a lower tolerance or a more central seed."
                 )
 
+            # Georeference the pixel-space polygon (relative to the final
+            # window it was traced in) before writing it out.
+            map_polygon = polygon_pixels_to_map(
+                result.polygon, window.origin, window.cell_size
+            )
             write_polygon(
                 output_fc_path,
-                result.polygon,
+                map_polygon,
                 window.spatial_reference,
                 source_raster=source_raster_name,
                 seg_method="fuzzy_select",

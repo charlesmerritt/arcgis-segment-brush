@@ -14,6 +14,7 @@ import numpy as np
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
+    from shapely.geometry import Polygon
 
 
 @dataclass
@@ -113,3 +114,52 @@ def pixel_to_map_coords(
     x = origin[0] + (col + 0.5) * cell_size[0]
     y = origin[1] - (row + 0.5) * cell_size[1]
     return (x, y)
+
+
+def polygon_pixels_to_map(
+    polygon: Polygon,
+    origin: tuple[float, float],
+    cell_size: tuple[float, float],
+) -> Polygon:
+    """Convert a pixel-space polygon (x=col, y=row) to map coordinates.
+
+    The segmentation pipeline produces polygons in the raster window's pixel
+    space using the image convention ``x = col``, ``y = row``. The feature
+    writer expects map coordinates, so each vertex must be georeferenced before
+    it is written. This applies the same pixel-center convention as
+    :func:`pixel_to_map_coords`, which also flips the y-axis (image rows grow
+    downward, map y grows upward):
+
+        map_x = origin_x + (col + 0.5) * cell_w
+        map_y = origin_y - (row + 0.5) * cell_h
+
+    Parameters
+    ----------
+    polygon : shapely.geometry.Polygon
+        Polygon with vertices in pixel coordinates (x=col, y=row).
+    origin : tuple
+        (x, y) of the raster window's top-left corner in map units.
+    cell_size : tuple
+        (x_size, y_size) pixel dimensions in map units.
+
+    Returns
+    -------
+    shapely.geometry.Polygon
+        The polygon with vertices in map coordinates.
+    """
+    from shapely.affinity import affine_transform
+
+    cell_w, cell_h = cell_size
+    origin_x, origin_y = origin
+    # affine_transform matrix [a, b, d, e, xoff, yoff] applies
+    #   x' = a*x + b*y + xoff   (col → map_x)
+    #   y' = d*x + e*y + yoff   (row → map_y, negated to flip the axis)
+    matrix = [
+        cell_w,
+        0.0,
+        0.0,
+        -cell_h,
+        origin_x + 0.5 * cell_w,
+        origin_y - 0.5 * cell_h,
+    ]
+    return affine_transform(polygon, matrix)
