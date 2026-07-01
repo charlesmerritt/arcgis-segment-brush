@@ -11,7 +11,7 @@ toolbox/. This separation allows testing without an ArcGIS Pro license.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 
@@ -338,8 +338,10 @@ def mask_to_polygon(mask: NDArray[np.bool_]) -> Polygon:
         raise ValueError("mask has no traceable boundary")
 
     # The longest contour is the outer boundary of the largest component.
-    contour = max(contours, key=len)
-    coords = [(col - 1.0, row - 1.0) for row, col in contour]
+    contour = cast("NDArray[np.float64]", max(contours, key=len))
+    # Contour points are (row, col) in the padded window; undo the 1px pad and
+    # emit as (x=col, y=row) to match the pixel-coordinate convention.
+    coords = [(point[1] - 1.0, point[0] - 1.0) for point in contour]
     return Polygon(coords)
 
 
